@@ -1,29 +1,53 @@
-﻿#include <iostream>    
-#include <ctime>
-#include <cmath>
-#include <algorithm>
+﻿// ConsoleApplication1.cpp : 此文件包含 "main" 函数。程序执行将在此处开始并结束。
+//
+#include <glad/glad.h>
+#include <GLFW/glfw3.h>
 #include <vector>
-// GLEW    
-#define GLEW_STATIC    
-#include <glad.h>    
-// GLFW    
-#include <GLFW/glfw3.h>    
-void framebuffer_size_callback(GLFWwindow* window, int width, int height);
-void processInput(GLFWwindow *window);
-std::vector<float> Bresenham(int x0, int y0, int x1, int y1);
-std::vector<float> DDA(int x0, int y0, int x1, int y1);
+#include <iostream>
+using namespace std;
+//#define MyRand(x) static_cast <float> (rand() * x) / static_cast <float> (RAND_MAX);
+
+struct Point
+{
+    float x;
+    float y;
+    float z;
+public:
+    Point()
+    {
+        this->x = 0;
+        this->y = 0;
+        this->z = 0;
+
+    }
+    Point(float _x, float _y, float _z)
+    {
+        this->x = _x;
+        this->y = _y;
+        this->z = _z;
+    }
+};
+
+
+void FramebufferSizeCallback(GLFWwindow* window, int width, int height);
+void ProcessInput(GLFWwindow *window);
+vector<Point> ConHen(Point p0, Point p1, Point lineP0, Point lineP1, Point lineP2, Point lineP3);
+float RandFloat();
+void EnCode(int &code, Point p0, Point lineP0, Point lineP1, Point lineP2, Point lineP3);
+
 
 // settings
 const unsigned int SCR_WIDTH = 800;
 const unsigned int SCR_HEIGHT = 600;
 
-const char *vertexShaderSource = "#version 460 core\n"
-"layout (location = 1) in vec3 aPos;\n"
+//写死的shader string
+const char *vertexShaderSource = "#version 330 core\n"
+"layout (location = 0) in vec3 aPos;\n"
 "void main()\n"
 "{\n"
 "   gl_Position = vec4(aPos.x, aPos.y, aPos.z, 1.0);\n"
 "}\0";
-const char *fragmentShaderSource = "#version 460 core\n"
+const char *fragmentShaderSource = "#version 330 core\n"
 "out vec4 FragColor;\n"
 "void main()\n"
 "{\n"
@@ -53,7 +77,7 @@ int main()
         return -1;
     }
     glfwMakeContextCurrent(window);
-    glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
+    glfwSetFramebufferSizeCallback(window, FramebufferSizeCallback);
 
     // glad: load all OpenGL function pointers
     // ---------------------------------------
@@ -62,17 +86,13 @@ int main()
         std::cout << "Failed to initialize GLAD" << std::endl;
         return -1;
     }
-    // 初始设置环节结束
 
-
+#pragma region Build Shader
     // build and compile our shader program
     // ------------------------------------
-    // (1) vertex shader
-    // 创建一个顶点着色器，ID是vertexShader
+    // vertex shader
     int vertexShader = glCreateShader(GL_VERTEX_SHADER);
-    // 将对应的shader代码绑定到这个新创建的顶点着色器上面，vertexShaderSource就是对应的代码
     glShaderSource(vertexShader, 1, &vertexShaderSource, NULL);
-    // 编译shader
     glCompileShader(vertexShader);
     // check for shader compile errors
     int success;
@@ -83,8 +103,7 @@ int main()
         glGetShaderInfoLog(vertexShader, 512, NULL, infoLog);
         std::cout << "ERROR::SHADER::VERTEX::COMPILATION_FAILED\n" << infoLog << std::endl;
     }
-
-    // (2)fragment shader
+    // fragment shader
     int fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
     glShaderSource(fragmentShader, 1, &fragmentShaderSource, NULL);
     glCompileShader(fragmentShader);
@@ -108,9 +127,10 @@ int main()
     }
     glDeleteShader(vertexShader);
     glDeleteShader(fragmentShader);
-    // 到这里为止，shader编译链接完成
 
-    // 下面准备顶点的数据
+#pragma endregion
+
+#pragma region SetUp vertex data and buffers
     // set up vertex data (and buffer(s)) and configure vertex attributes
     // ------------------------------------------------------------------
     float vertices[] = {
@@ -120,190 +140,134 @@ int main()
         -0.5f,  0.5f, 0.0f   // top left 
     };
     unsigned int indices[] = {  // note that we start from 0!
-        0, 1, 3,  // first Triangle
-        1, 2, 3   // second Triangle
+        0, 1,   // first Triangle
+        1, 2,   // second Triangle
+        2, 3,
+        3, 0
     };
     unsigned int VBO, VAO, EBO;
+    //生成buffer序号
     glGenVertexArrays(1, &VAO);
     glGenBuffers(1, &VBO);
-    //glGenBuffers(1, &EBO);
+    glGenBuffers(1, &EBO);
     // bind the Vertex Array Object first, then bind and set vertex buffer(s), and then configure vertex attributes(s).
+    // 先绑定VAO
     glBindVertexArray(VAO);
+    // 然后绑定VBO
+    glBindBuffer(GL_ARRAY_BUFFER, VBO);
+    // 这一步把数据复制到buffer里面
+    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+    // 同一时间 同一类型只能绑定一个buffer，下一个会替换上一个
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
+
+    // 告诉OpenGL怎么解释vertex buffer中的数据
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    // 和shader中的属性位置对应，vertex shader中设置的是location 0为坐标这一属性，因此要Enable这一属性。
+    glEnableVertexAttribArray(0);
+
+    // note that this is allowed, the call to glVertexAttribPointer registered VBO as the vertex attribute's bound vertex buffer object so afterwards we can safely unbind
+    // 这个感觉是内存中的数据在了，glVertexAttribPointer这一步以及注册了对应的buffer，因此可以解除绑定了。
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+
     // remember: do NOT unbind the EBO while a VAO is active as the bound element buffer object IS stored in the VAO; keep the EBO bound.
-    // 当VAO还是存活的时候不要解绑EBO，因为VAO中是指向EBO的
     //glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 
     // You can unbind the VAO afterwards so other VAO calls won't accidentally modify this VAO, but this rarely happens. Modifying other
     // VAOs requires a call to glBindVertexArray anyways so we generally don't unbind VAOs (nor VBOs) when it's not directly necessary.
+    // 因为我要有多个VAO，所以我先解绑
     glBindVertexArray(0);
 
 
-    // uncomment this call to draw in wireframe polygons.
+#pragma endregion
+
+
+
+#pragma region Get ConHen Points
+    Point lineP0(-0.5f, 0.5f, 0);
+    Point lineP1(0.5f, 0.5f, 0);
+    Point lineP2(0.5f, -0.5f, 0);
+    Point lineP3(-0.5f, -0.5f, 0);
+    vector<Point> testPoints;
+    for (int i = 0; i < 100; i++)
+    {
+        Point p0(RandFloat(), RandFloat(), 0);
+        Point p1(RandFloat(), RandFloat(), 0);
+        //Point p0(0.7f, 0.6f, 0);
+        //Point p1(0.1f, 0, 0);
+
+        vector<Point> points = ConHen(p0, p1, lineP0, lineP1, lineP2, lineP3);
+        testPoints.insert(testPoints.end(), points.begin(), points.end());
+        //testPoints.push_back(p0);
+        //testPoints.push_back(p1);
+
+    }
+    //Point p0(0.6f, 0.9f, 0);
+    //Point p1(0.1f, 0, 0);
+
+    //vector<Point> points = ConHen(p0, p1, lineP0, lineP1, lineP2, lineP3);
+    //testPoints.insert(testPoints.end(), points.begin(), points.end());
+
+
+
+
+    unsigned int VAO_Points, VBO_Points;
+    glGenVertexArrays(1, &VAO_Points);
+    glBindVertexArray(VAO_Points);
+
+
+    glGenBuffers(1, &VBO_Points);
+    glBindBuffer(GL_ARRAY_BUFFER, VBO_Points);
+    glBufferData(GL_ARRAY_BUFFER, testPoints.size() * sizeof(Point), &testPoints[0], GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    //这个函数和当前的VAO相关，如果我把这个函数注释掉了，那么不会绘制出图像
+    //每次的enable，针对的是当前的VAO，VAO保存有VertexAttribute相关的信息和指向VBO的指针。
+    glEnableVertexAttribArray(0);
+
+#pragma endregion
+
+    // render
+    glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+
+    glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    // render loop
+    // -----------
     //glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-
-#pragma region Bresenham
-    //(1) Bresenham算法
-    // render
-    // 背景颜色
-    glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
-    // 开始时间
-    clock_t begin = clock();
-    for (int j = 0; j <= 1000000; j++)
-    {
-        // draw our first triangle
-        glUseProgram(shaderProgram);
-        glBindVertexArray(VAO); // seeing as we only have a single VAO there's no need to bind it every time, but we'll do so to keep things a bit more organized
-        int x0 = rand() % 10 - 10;
-        int x1 = rand() % 10 + 10;
-        int y0 = rand() % 10 - 10;
-        int y1 = rand() % 10 + 10;
-        std::vector<float> newVertices = Bresenham(x0, y0, x1, y1);
-        //记得要归一化坐标
-        for (int i = 0; i < newVertices.size(); i++)
-        {
-            if (i % 3 == 0)
-                newVertices[i] /= SCR_WIDTH;
-            if (i % 3 == 1)
-                newVertices[i] /= SCR_HEIGHT;
-        }
-        glBindBuffer(GL_ARRAY_BUFFER, VBO);
-        //同一时间只有一个VBO绑定到GL_ARRAY_BUFFER这种类型的buffer上
-        glBufferData(GL_ARRAY_BUFFER, newVertices.size() * sizeof(float), &newVertices[0], GL_STATIC_DRAW);
-        //glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
-        //告诉OpenGL如何解释顶点数据
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-        //激活index为1的属性，从vertex shader可以看出，我们 layout (location = 1)，也就是第一个属性
-        glEnableVertexAttribArray(1);
-        //glDrawArrays(GL_TRIANGLES, 0, 6);
-        glDrawArrays(GL_POINTS, 0, newVertices.size() / 3);
-        //glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
-        // glBindVertexArray(0); // no need to unbind it every time 
-        if (j == 1000)
-        {
-            clock_t end = clock();
-            double elapsed_secs = double(end - begin) / CLOCKS_PER_SEC;
-            std::cout << "运行Bresenham算法1000次，耗时 " << elapsed_secs << " 秒" << std::endl;
-        }
-        else if (j == 10000)
-        {
-            clock_t end = clock();
-            double elapsed_secs = double(end - begin) / CLOCKS_PER_SEC;
-            std::cout << "运行Bresenham算法10000次，耗时 " << elapsed_secs << " 秒" << std::endl;
-        }
-        else if (j == 100000)
-        {
-            clock_t end = clock();
-            double elapsed_secs = double(end - begin) / CLOCKS_PER_SEC;
-            std::cout << "运行Bresenham算法100000次，耗时 " << elapsed_secs << " 秒" << std::endl;
-        }
-        else if (j == 1000000)
-        {
-            clock_t end = clock();
-            double elapsed_secs = double(end - begin) / CLOCKS_PER_SEC;
-            std::cout << "运行Bresenham算法1000000次，耗时 " << elapsed_secs << " 秒" << std::endl;
-        }
-    }
-    glfwSwapBuffers(window);
-#pragma endregion
-
-
-#pragma region DDA
-    //(2) DDA算法
-    // render
-    // 背景颜色
-    glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
-    // 开始时间
-    clock_t begin2 = clock();
-    for (int j = 0; j <= 1000000; j++)
-    {
-        // draw our first triangle
-        glUseProgram(shaderProgram);
-        glBindVertexArray(VAO); // seeing as we only have a single VAO there's no need to bind it every time, but we'll do so to keep things a bit more organized
-        int x0 = rand() % 10 - 10;
-        int x1 = rand() % 10 + 10;
-        int y0 = rand() % 10 - 10;
-        int y1 = rand() % 10 + 10;
-        std::vector<float> newVertices = DDA(x0, y0, x1, y1);
-        //记得要归一化坐标
-        for (int i = 0; i < newVertices.size(); i++)
-        {
-            if (i % 3 == 0)
-                newVertices[i] /= SCR_WIDTH;
-            if (i % 3 == 1)
-                newVertices[i] /= SCR_HEIGHT;
-        }
-        glBindBuffer(GL_ARRAY_BUFFER, VBO);
-        //同一时间只有一个VBO绑定到GL_ARRAY_BUFFER这种类型的buffer上
-        glBufferData(GL_ARRAY_BUFFER, newVertices.size() * sizeof(float), &newVertices[0], GL_STATIC_DRAW);
-        //glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
-        //告诉OpenGL如何解释顶点数据
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-        //激活index为1的属性，从vertex shader可以看出，我们 layout (location = 1)，也就是第一个属性
-        glEnableVertexAttribArray(1);
-        //glDrawArrays(GL_TRIANGLES, 0, 6);
-        glDrawArrays(GL_POINTS, 0, newVertices.size() / 3);
-        //glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
-        // glBindVertexArray(0); // no need to unbind it every time 
-        if (j == 1000)
-        {
-            clock_t end2 = clock();
-            double elapsed_secs = double(end2 - begin2) / CLOCKS_PER_SEC;
-            std::cout << "运行DDA算法1000次，耗时 " << elapsed_secs << " 秒" << std::endl;
-        }
-        else if (j == 10000)
-        {
-            clock_t end2 = clock();
-            double elapsed_secs = double(end2 - begin2) / CLOCKS_PER_SEC;
-            std::cout << "运行DDA算法10000次，耗时 " << elapsed_secs << " 秒" << std::endl;
-        }
-        else if (j == 100000)
-        {
-            clock_t end2 = clock();
-            double elapsed_secs = double(end2 - begin2) / CLOCKS_PER_SEC;
-            std::cout << "运行DDA算法100000次，耗时 " << elapsed_secs << " 秒" << std::endl;
-        }
-        else if (j == 1000000)
-        {
-            clock_t end2 = clock();
-            double elapsed_secs = double(end2 - begin2) / CLOCKS_PER_SEC;
-            std::cout << "运行DDA算法1000000次，耗时 " << elapsed_secs << " 秒" << std::endl;
-        }
-    }
-    glfwSwapBuffers(window);
-#pragma endregion
-
-
     while (!glfwWindowShouldClose(window))
     {
-        //glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
-        //glClear(GL_COLOR_BUFFER_BIT);
-        //glUseProgram(shaderProgram);
-        //glBindVertexArray(VAO); // seeing as we only have a single VAO there's no need to bind it every time, but we'll do so to keep things a bit more organized
-        //std::vector<float> newVertices = DDA(1, 1, 100, 200);
-        ////记得要归一化坐标
-        //for (int i = 0; i < newVertices.size(); i++)
-        //{
-        //    if(i % 3 == 0)
-        //        newVertices[i] /= SCR_WIDTH;
-        //    else if (i % 3 == 1)
-        //        newVertices[i] /= SCR_HEIGHT;
-        //}
-        //glBindBuffer(GL_ARRAY_BUFFER, VBO);
-        ////同一时间只有一个VBO绑定到GL_ARRAY_BUFFER这种类型的buffer上
-        //glBufferData(GL_ARRAY_BUFFER, newVertices.size() * sizeof(float), &newVertices[0], GL_STATIC_DRAW);
-        ////glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
-        ////告诉OpenGL如何解释顶点数据
-        //glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-        ////激活index为1的属性，从vertex shader可以看出，我们 layout (location = 1)，也就是第一个属性
-        //glEnableVertexAttribArray(1);
-        ////glDrawArrays(GL_TRIANGLES, 0, 6);
-        //glDrawArrays(GL_POINTS, 0, newVertices.size() / 3);
-        ////glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
-        //// glBindVertexArray(0); // no need to unbind it every time
-        //glfwSwapBuffers(window);
+        // input
+        // -----
+        ProcessInput(window);
 
+        // render
+        // ------
+        glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        // draw our first triangle
+        glUseProgram(shaderProgram);
+
+
+        //glBindBuffer(GL_ARRAY_BUFFER, VBO_Points);
+        glBindVertexArray(VAO_Points); // seeing as we only have a single VAO there's no need to bind it every time, but we'll do so to keep things a bit more organized
+
+        for (int i = 0; i < testPoints.size(); i += 2)
+        {
+            glDrawArrays(GL_LINE_STRIP, i, 2);
+        }
+
+        //glBindBuffer(GL_ARRAY_BUFFER, VBO);
+        glBindVertexArray(VAO); // seeing as we only have a single VAO there's no need to bind it every time, but we'll do so to keep things a bit more organized
+
+        glDrawElements(GL_LINE_STRIP, 8, GL_UNSIGNED_INT, 0);
+
+        // glBindVertexArray(0); // no need to unbind it every time 
+
+        // glfw: swap buffers and poll IO events (keys pressed/released, mouse moved etc.)
+        // -------------------------------------------------------------------------------
+        glfwSwapBuffers(window);
         glfwPollEvents();
     }
 
@@ -313,184 +277,264 @@ int main()
     glDeleteBuffers(1, &VBO);
     glDeleteBuffers(1, &EBO);
 
+
     // glfw: terminate, clearing all previously allocated GLFW resources.
     // ------------------------------------------------------------------
     glfwTerminate();
     return 0;
 }
 
-std::vector<float> Bresenham(int x0, int y0, int x1, int y1)
+void EnCode(int &areaCode, Point p0, Point lineP0, Point lineP1, Point lineP2, Point lineP3)
 {
-    std::vector<float> drawingPoints;
-    drawingPoints.reserve(30);
-    if (x0 == x1)
+    if (p0.y > lineP0.y)
     {
-        drawingPoints.push_back(x0);
-        drawingPoints.push_back(y0);
-        drawingPoints.push_back(0);
+        areaCode |= 0b1000;
     }
     else
     {
-        float k = (float)(y1 - y0) / (float)(x1 - x0);
-        if (abs(k) >= 1)
-        {
-            //保证y0小，for循环是递增的
-            if (y0 > y1)
-            {
-                std::swap(x0, x1);
-                std::swap(y0, y1);
-            }
-            // 加入起始点
-            drawingPoints.push_back(x0);
-            drawingPoints.push_back(y0);
-            drawingPoints.push_back(0);
-
-            // 斜率绝对值大于等于1的情况, y每次递增1. x递增1/k
-            int dx = x1 - x0;
-            int dy = y1 - y0;
-            float errorX = 2 * dy;
-
-            for (int currY = y0, currX = x0; currY < y1; currY++)
-            {
-                // e = 2 * dx
-                //float realX =  (float)currX + (float)(1.0 / k);
-                int drawX = currX;
-                int drawY = currY + 1;
-                //误差累积
-                errorX += 2 * dx;
-                if (errorX > 0)
-                {
-                    // 画在
-                    drawX += (k > 0 ? 1 : 0);
-                    errorX -= 2 * dy;
-                }
-                //draw point
-                drawingPoints.push_back(drawX);
-                drawingPoints.push_back(drawY);
-                drawingPoints.push_back(0);
-                currX = drawX;
-            }
-        }
-        else
-        {
-            //保证x0小，for循环是递增的
-            if (x0 > x1)
-            {
-                std::swap(x0, x1);
-                std::swap(y0, y1);
-            }
-
-            drawingPoints.push_back(x0);
-            drawingPoints.push_back(y0);
-            drawingPoints.push_back(0);
-            // 斜率绝对值大于等于1的情况, x每次递增1. y递增k
-            int dx = x1 - x0;
-            int dy = y1 - y0;
-            int errorY = 2 * dx;
-            // draw beginning point 
-            for (int currX = x0, currY = y0; currX < x1; currX++)
-            {
-                //float realY = (float)currY + k;
-                int drawY = currY;
-                int drawX = currX + 1;
-                //误差累积
-                errorY += 2 * dy;
-                if (errorY > 0)
-                {
-                    // 画在下一个点上
-                    drawY += (k > 0 ? 1 : 0);
-                    errorY -= 2 * dx;
-                }
-                //draw point
-                drawingPoints.push_back(drawX);
-                drawingPoints.push_back(drawY);
-                drawingPoints.push_back(0);
-                currY = drawY;
-            }
-        }
+        areaCode &= 0b0111;
     }
-    return drawingPoints;
+    if (p0.x > lineP1.x)
+    {
+        areaCode |= 0b0100;
+    }
+    else
+    {
+        areaCode &= 0b1011;
+    }
+    if (p0.y < lineP2.y)
+    {
+        areaCode |= 0b0010;
+    }
+    else
+    {
+        areaCode &= 0b1101;
+    }
+    if (p0.x < lineP0.x)
+    {
+        areaCode |= 0b0001;
+    }
+    else
+    {
+        areaCode &= 0b1110;
+    }
 }
 
 
-std::vector<float> DDA(int x0, int y0, int x1, int y1)
+// 对于传入的两个点使用ConHen算法，返回两个在屏幕内的点
+// 约定lineP0 --》 P3 分别为左上，右上，右下，坐下四个点
+vector<Point> ConHen(Point p0, Point p1, Point lineP0, Point lineP1, Point lineP2, Point lineP3)
 {
-    std::vector<float> drawingPoints;
-    drawingPoints.reserve(30);
-    if (x0 == x1)
+    //（1）计算两个点的对应4位二进制码，
+    // 0000 上右下左 内部
+    int areaP0 = 0b0000;
+    int areaP1 = 0b0000;
+
+    Point finalP0 = p0;
+    Point finalP1 = p1;
+
+    bool done = true;
+    while (done)
     {
-        drawingPoints.push_back(x0);
-        drawingPoints.push_back(y0);
-        drawingPoints.push_back(0);
-    }
-    else
-    {
-        float k = (float)(y1 - y0) / (float)(x1 - x0);
-        if (abs(k) >= 1)
+        EnCode(areaP0, finalP0, lineP0, lineP1, lineP2, lineP3);
+        EnCode(areaP1, finalP1, lineP0, lineP1, lineP2, lineP3);
+        //两个点都在内部
+        if ((areaP0 | areaP1) == 0b0000)
+            break;
+        //两个点都完全在一条边界线的外部，表示该线段完全在范围之外
+        //返回一个空的vector
+        if ((areaP0 & areaP1) != 0b0000)
         {
-            //保证y0小，for循环是递增的
-            if (y0 > y1)
+            return vector<Point>();
+        }
+
+        //开始剪裁
+        if (areaP0 != 0b0000)
+        {
+            if ((areaP0 | 0b1000) == areaP0)
             {
-                std::swap(x0, x1);
-                std::swap(y0, y1);
+                //在上方线框外部，改变坐标到交点位置
+                finalP0.y = lineP0.y;
+                if (p1.y - p0.y != 0)
+                {
+                    finalP0.x = (p1.x - p0.x) * (finalP0.y - p0.y) / (p1.y - p0.y) + p0.x;
+                }
+                continue;
             }
-            // 加入起始点
-            drawingPoints.push_back(x0);
-            drawingPoints.push_back(y0);
-            drawingPoints.push_back(0);
-
-            // 斜率绝对值大于等于1的情况, y每次递增1. x递增1/k
-            int dx = x1 - x0;
-            int dy = y1 - y0;
-            int step = std::max(dx, dy);
-            float xIncrement = (float)dx / (float)step;
-            float yIncrement = (float)dy / (float)step;
-
-            for (float currY = y0, currX = x0; currY < y1;)
+            if ((areaP0 | 0b0100) == areaP0)
             {
-                currX = currX + xIncrement;
-                currY = currY + yIncrement;
-                //draw point
-                drawingPoints.push_back(round(currX));
-                drawingPoints.push_back(round(currY));
-                drawingPoints.push_back(0);
+                //在右方线框外部
+                finalP0.x = lineP1.x;
+                if (p1.x - p0.x != 0)
+                {
+                    finalP0.y = (p1.y - p0.y) * (finalP0.x - p0.x) / (p1.x - p0.x) + p0.y;
+                }
+                continue;
+            }
+            if ((areaP0 | 0b0010) == areaP0)
+            {
+                //在下方线框外部
+                finalP0.y = lineP2.y;
+                if (p1.y - p0.y != 0)
+                {
+                    finalP0.x = (p1.x - p0.x) * (finalP0.y - p0.y) / (p1.y - p0.y) + p0.x;
+                }
+                continue;
+            }
+            if ((areaP0 | 0b0001) == areaP0)
+            {
+                //在左方线框外部
+                finalP0.x = lineP0.x;
+                if (p1.x - p0.x != 0)
+                {
+                    finalP0.y = (p1.y - p0.y) * (finalP0.x - p0.x) / (p1.x - p0.x) + p0.y;
+                }
+                areaP0 ^= 0b0010;
+                continue;
             }
         }
-        else
+        if (areaP1 != 0b0000)
         {
-            //保证x0小，for循环是递增的
-            if (x0 > x1)
+            if ((areaP1 | 0b1000) == areaP1)
             {
-                std::swap(x0, x1);
-                std::swap(y0, y1);
+                //在上方线框外部
+                finalP1.y = lineP0.y;
+                if (p1.y - p0.y != 0)
+                {
+                    finalP1.x = (p1.x - p0.x) * (finalP1.y - p0.y) / (p1.y - p0.y) + p0.x;
+                }
+                continue;
             }
-
-            drawingPoints.push_back(x0);
-            drawingPoints.push_back(y0);
-            drawingPoints.push_back(0);
-            // 斜率绝对值大于等于1的情况, x每次递增1. y递增k
-            int dx = x1 - x0;
-            int dy = y1 - y0;
-            int step = std::max(dx, dy);
-            float xIncrement = dx / step;
-            float yIncrement = dy / step;
-            for (int currX = x0, currY = y0; currX < x1;)
+            if ((areaP1 | 0b0100) == areaP1)
             {
-                currX = currX + xIncrement;
-                currY = currY + yIncrement;
-                //draw point
-                drawingPoints.push_back(round(currX));
-                drawingPoints.push_back(round(currY));
-                drawingPoints.push_back(0);
+                //在右方线框外部
+                finalP1.x = lineP1.x;
+                if (p1.x - p0.x != 0)
+                {
+                    finalP1.y = (p1.y - p0.y) * (finalP1.x - p0.x) / (p1.x - p0.x) + p0.y;
+                }
+                continue;
+            }
+            if ((areaP1 | 0b0010) == areaP1)
+            {
+                //在下方线框外部
+                finalP1.y = lineP2.y;
+                if (p1.y - p0.y != 0)
+                {
+                    finalP1.x = (p1.x - p0.x) * (finalP1.y - p0.y) / (p1.y - p0.y) + p0.x;
+                }
+                continue;
+            }
+            if ((areaP1 | 0b0001) == areaP1)
+            {
+                //在左方线框外部
+                finalP1.x = lineP0.x;
+                if (p1.x - p0.x != 0)
+                {
+                    finalP1.y = (p1.y - p0.y) * (finalP1.x - p0.x) / (p1.x - p0.x) + p0.y;
+                }
+                continue;
             }
         }
+        break;
     }
-    return drawingPoints;
+    //if (areaP0 != 0b0000)
+    //{
+    //    if ((areaP0 | 0b1000) == areaP0)
+    //    {
+    //        //在上方线框外部，改变坐标到交点位置
+    //        finalP0.y = lineP0.y;
+    //        if (p1.y - p0.y != 0)
+    //        {
+    //            finalP0.x = (p1.x - p0.x) * (finalP0.y - p0.y) / (p1.y - p0.y) + p0.x;
+    //        }
+    //        areaP0 ^= 0b1000;
+    //    }
+    //    if ((areaP0 | 0b0100) == areaP0)
+    //    {
+    //        //在右方线框外部
+    //        finalP0.x = lineP1.x;
+    //        if (p1.x - p0.x != 0)
+    //        {
+    //            finalP0.y = (p1.y - p0.y) * (finalP0.x - p0.x) / (p1.x - p0.x) + p0.y;
+    //        }
+    //        areaP0 ^= 0b0100;
+    //    }
+    //    if ((areaP0 | 0b0010) == areaP0)
+    //    {
+    //        //在下方线框外部
+    //        finalP0.y = lineP2.y;
+    //        if (p1.y - p0.y != 0)
+    //        {
+    //            finalP0.x = (p1.x - p0.x) * (finalP0.y - p0.y) / (p1.y - p0.y) + p0.x;
+    //        }
+    //        areaP0 ^= 0b0010;
+    //    }
+    //    if ((areaP0 | 0b0001) == areaP0)
+    //    {
+    //        //在左方线框外部
+    //        finalP0.x = lineP0.x;
+    //        if (p1.x - p0.x != 0)
+    //        {
+    //            finalP0.y = (p1.y - p0.y) * (finalP0.x - p0.x) / (p1.x - p0.x) + p0.y;
+    //        }
+    //    }
+    //}
+    //else if (areaP1 != 0b0000)
+    //{
+    //    if ((areaP1 | 0b1000) == areaP1)
+    //    {
+    //        //在上方线框外部
+    //        finalP1.y = lineP0.y;
+    //        if (p1.y - p0.y != 0)
+    //        {
+    //            finalP1.x = (p1.x - p0.x) * (finalP1.y - p0.y) / (p1.y - p0.y) + p0.x;
+    //        }
+    //        areaP1 ^= 0b1000;
+    //    }
+    //    if ((areaP1 | 0b0100) == areaP1)
+    //    {
+    //        //在右方线框外部
+    //        finalP1.x = lineP1.x;
+    //        if (p1.x - p0.x != 0)
+    //        {
+    //            finalP1.y = (p1.y - p0.y) * (finalP1.x - p0.x) / (p1.x - p0.x) + p0.y;
+    //        }
+    //        areaP1 ^= 0b0100;
+    //    }
+    //    if ((areaP1 | 0b0010) == areaP1)
+    //    {
+    //        //在下方线框外部
+    //        finalP1.y = lineP2.y;
+    //        if (p1.y - p0.y != 0)
+    //        {
+    //            finalP1.x = (p1.x - p0.x) * (finalP1.y - p0.y) / (p1.y - p0.y) + p0.x;
+    //        }
+    //        areaP1 ^= 0b0010;
+    //    }
+    //    if ((areaP1 | 0b0001) == areaP1)
+    //    {
+    //        //在左方线框外部
+    //        finalP1.x = lineP0.x;
+    //        if (p1.x - p0.x != 0)
+    //        {
+    //            finalP1.y = (p1.y - p0.y) * (finalP1.x - p0.x) / (p1.x - p0.x) + p0.y;
+    //        }
+    //    }
+    //}
+
+    return vector<Point>({ finalP0, finalP1 });
+
+}
+
+float RandFloat()
+{
+    return static_cast <float> (rand() - RAND_MAX / 2) / static_cast <float> (RAND_MAX / 2);
 }
 
 // process all input: query GLFW whether relevant keys are pressed/released this frame and react accordingly
 // ---------------------------------------------------------------------------------------------------------
-void processInput(GLFWwindow *window)
+void ProcessInput(GLFWwindow *window)
 {
     if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
         glfwSetWindowShouldClose(window, true);
@@ -498,7 +542,7 @@ void processInput(GLFWwindow *window)
 
 // glfw: whenever the window size changed (by OS or user resize) this callback function executes
 // ---------------------------------------------------------------------------------------------
-void framebuffer_size_callback(GLFWwindow* window, int width, int height)
+void FramebufferSizeCallback(GLFWwindow* window, int width, int height)
 {
     // make sure the viewport matches the new window dimensions; note that width and 
     // height will be significantly larger than specified on retina displays.
