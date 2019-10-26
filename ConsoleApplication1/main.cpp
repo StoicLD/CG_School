@@ -35,6 +35,10 @@ vector<Point> ConHen(Point p0, Point p1, Point lineP0, Point lineP1, Point lineP
 float RandFloat();
 void EnCode(int &code, Point p0, Point lineP0, Point lineP1, Point lineP2, Point lineP3);
 
+bool LiangClipHelper(float p, float q, float &u1, float &u2);
+vector<Point> LiangClip(Point p0, Point p1, Point lineP0, Point lineP1, Point lineP2, Point lineP3);
+
+
 
 // settings
 const unsigned int SCR_WIDTH = 800;
@@ -196,7 +200,9 @@ int main()
         //Point p0(0.7f, 0.6f, 0);
         //Point p1(0.1f, 0, 0);
 
-        vector<Point> points = ConHen(p0, p1, lineP0, lineP1, lineP2, lineP3);
+        //vector<Point> points = ConHen(p0, p1, lineP0, lineP1, lineP2, lineP3);
+        vector<Point> points = LiangClip(p0, p1, lineP0, lineP1, lineP2, lineP3);
+
         testPoints.insert(testPoints.end(), points.begin(), points.end());
         //testPoints.push_back(p0);
         //testPoints.push_back(p1);
@@ -526,6 +532,88 @@ vector<Point> ConHen(Point p0, Point p1, Point lineP0, Point lineP1, Point lineP
     return vector<Point>({ finalP0, finalP1 });
 
 }
+
+// 约定lineP0 --》 P3 分别为左上，右上，右下，左下四个点
+vector<Point> LiangClip(Point point0, Point point1, Point lineP0, Point lineP1, Point lineP2, Point lineP3)
+{
+    //u1, u2初始化为0，1
+    //其中u1是选取r中的最大数值，u2是选取r中的最小数值
+    float u1 = 0, u2 = 1;
+    // u = p / q;
+    // 
+    float dx = point1.x - point0.x;
+    float dy = point1.y - point0.y;
+    float p1 = -dx;
+    float p2 = dx;
+    float p3 = -dy;
+    float p4 = dy;
+
+    float q1 = point0.x - lineP0.x;
+    float q2 = lineP1.x - point0.x;
+    float q3 = point0.y - lineP2.y;
+    float q4 = lineP0.y - point0.y;
+
+    //每次都更新一下u1，u2.一旦出现不符合条件的情况就说明在线框外部
+    vector<Point> results({Point(), Point()});
+    if (LiangClipHelper(p1, q1, u1, u2))
+    {
+        if (LiangClipHelper(p2, q2, u1, u2))
+        {
+            if (LiangClipHelper(p3, q3, u1, u2))
+            {
+                if (LiangClipHelper(p4, q4, u1, u2))
+                {
+                    //得到最后经过剪裁的两个点。
+                    if (u1 >= 0)
+                    {
+                        results[0].x = point0.x + u1 * dx;
+                        results[0].y = point0.y + u1 * dy;
+                    }
+                    if (u2 <= 1)
+                    {
+                        results[1].x = point0.x + u2 * dx;
+                        results[1].y = point0.y + u2 * dy;
+                    }
+                }
+            }
+        }
+    }
+
+    return results;
+}
+
+bool LiangClipHelper(float p, float q, float &u1, float &u2)
+{
+    if (p < 0)
+    {
+        //更新u1，由外部向内部相交的点
+        //u1 取r和0的最大值。
+        auto r = q / p;
+        if (r > u2)
+            return false;
+        else if (r > u1)
+            u1 = r;
+    }
+    else
+    {
+        if (p > 0)
+        {
+            auto r = q / p;
+            if (r < u1)
+                return false;
+            else if (r < u2)
+                u2 = r;
+        }
+        else
+        {
+            //与其中一条边界平行的情况。dx或者dy，也就是p=0
+            if (q < 0)
+                return false;
+        }
+    }
+    return true;
+}
+
 
 float RandFloat()
 {
